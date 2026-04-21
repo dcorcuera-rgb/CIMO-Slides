@@ -279,6 +279,7 @@ def canonicalize_issues(rows: List[Dict[str, str]], headers: Sequence[str]) -> L
     )
     identified_date_col = resolve_column(headers, "date_issue_identified", ("Date Issue Identified",))
     create_date_col = resolve_column(headers, "record_create_date", ("Create Date",))
+    rca_completed_col = resolve_column(headers, "date_rca_completed", ("Date RCA Completed",))
     issue_open_date_col = resolve_column(headers, "issue_open_date", ("Issue Open Date",))
     date_closed_col = resolve_column(headers, "date_closed", ("Date Closed",))
 
@@ -319,6 +320,7 @@ def canonicalize_issues(rows: List[Dict[str, str]], headers: Sequence[str]) -> L
                 "unresolved_action_plans_count": clean(row.get(unresolved_ap_count_col or "", "")),
                 "date_issue_identified": clean(row.get(identified_date_col or "", "")),
                 "record_create_date": clean(row.get(create_date_col or "", "")),
+                "date_rca_completed": clean(row.get(rca_completed_col or "", "")),
                 "issue_open_date": clean(row.get(issue_open_date_col or "", "")),
                 "date_closed": clean(row.get(date_closed_col or "", "")),
                 **({ap_link_col: clean(row.get(ap_link_col, ""))} if ap_link_col else {}),
@@ -551,10 +553,13 @@ def safe_ratio(numerator: int, denominator: int) -> Optional[float]:
 def build_kri_config(program_config: Dict[str, object]) -> Dict[str, object]:
     defaults = {
         "self_identified_keywords": ["Self-Identified"],
-        "sla_days_by_severity": {
-            "high": {"draft_creation": 7, "issue_open": 7, "remediation": 90},
-            "moderate": {"draft_creation": 14, "issue_open": 14, "remediation": 180},
-            "low": {"draft_creation": 30, "issue_open": 30, "remediation": 365},
+        "draft_logging_days": 30,
+        "rca_completion_days": 45,
+        "action_plan_documentation_days": 10,
+        "closure_days_by_severity": {
+            "high": 180,
+            "moderate": 270,
+            "low": 365,
         },
     }
     configured = program_config.get("kri_config", {})
@@ -573,17 +578,21 @@ def match_text_keywords(value: str, keywords: Sequence[str]) -> bool:
 def compute_kri(records: List[Dict[str, object]], program_config: Dict[str, object]) -> Dict[str, object]:
     scoped = [record for record in records if record.get("in_cimo_intake")]
     config = build_kri_config(program_config)
-    severity_thresholds = config.get("sla_days_by_severity", {})
+    draft_logging_days = config.get("draft_logging_days")
+    rca_completion_days = config.get("rca_completion_days")
+    action_plan_documentation_days = config.get("action_plan_documentation_days")
+    closure_days_by_severity = config.get("closure_days_by_severity", {})
     self_id_keywords = config.get("self_identified_keywords", [])
 
     draft_creation_values: List[int] = []
-    issue_open_values: List[int] = []
+    rca_completion_values: List[int] = []
     remediation_values: List[int] = []
     action_plan_open_values: List[int] = []
     adherence = {
-        "draft_creation": {"met": 0, "eligible": 0},
-        "issue_open": {"met": 0, "eligible": 0},
-        "remediation": {"met": 0, "eligible": 0},
+        "draft_logging": {"met": 0, "eligible": 0},
+        "rca_completion": {"met": 0, "eligible": 0},
+        "action_plan_documentation": {"met": 0, "eligible": 0},
+        "closure": {"met": 0, "eligible": 0},
     }
     adherence_by_severity: Dict[str, Dict[str, Dict[str, int]]] = {}
 
@@ -597,53 +606,60 @@ def compute_kri(records: List[Dict[str, object]], program_config: Dict[str, obje
 
     for record in scoped:
         severity = normalize_text(str(record.get("severity", "")))
-        thresholds = severity_thresholds.get(severity) if isinstance(severity_thresholds, dict) else None
-        if not isinstance(thresholds, dict):
-            thresholds = {}
+        closure_threshold = (
+            closure_days_by_severity.get(severity) if isinstance(closure_days_by_severity, dict) else None
+        )
 
         identified_at = parse_datetime(str(record.get("date_issue_identified", "")))
         created_at = parse_datetime(str(record.get("record_create_date", "")))
-        issue_open_at = parse_datetime(str(record.get("issue_open_date", "")))
+        rca_completed_at = parse_datetime(str(record.get("date_rca_completed", "")))
         closed_at = parse_datetime(str(record.get("date_closed", "")))
 
         draft_creation_days = days_between(identified_at, created_at)
-        issue_open_days = days_between(identified_at, issue_open_at)
+        rca_completion_metric_days = days_between(created_at, rca_completed_at)
+        issue_open_at = parse_datetime(str(record.get("issue_open_date", "")))
         remediation_days = days_between(issue_open_at, closed_at)
         action_plan_open_days = record.get("action_plan_open_days_min")
         if isinstance(action_plan_open_days, int):
             action_plan_open_values.append(action_plan_open_days)
 
         record["draft_creation_days"] = draft_creation_days
-        record["issue_open_days"] = issue_open_days
+        record["rca_completion_days"] = rca_completion_metric_days
         record["remediation_days"] = remediation_days
 
         sev_bucket = adherence_by_severity.setdefault(
             severity or "unknown",
             {
-                "draft_creation": {"met": 0, "eligible": 0},
-                "issue_open": {"met": 0, "eligible": 0},
-                "remediation": {"met": 0, "eligible": 0},
+                "closure": {"met": 0, "eligible": 0},
             },
         )
 
-        for metric_name, value in (
-            ("draft_creation", draft_creation_days),
-            ("issue_open", issue_open_days),
-            ("remediation", remediation_days),
-        ):
-            threshold = thresholds.get(metric_name)
-            if value is None or threshold is None:
-                continue
-            adherence[metric_name]["eligible"] += 1
-            sev_bucket[metric_name]["eligible"] += 1
-            if value <= int(threshold):
-                adherence[metric_name]["met"] += 1
-                sev_bucket[metric_name]["met"] += 1
+        if draft_creation_days is not None and draft_logging_days is not None:
+            adherence["draft_logging"]["eligible"] += 1
+            if draft_creation_days <= int(draft_logging_days):
+                adherence["draft_logging"]["met"] += 1
+
+        if rca_completion_metric_days is not None and rca_completion_days is not None:
+            adherence["rca_completion"]["eligible"] += 1
+            if rca_completion_metric_days <= int(rca_completion_days):
+                adherence["rca_completion"]["met"] += 1
+
+        if isinstance(action_plan_open_days, int) and action_plan_documentation_days is not None:
+            adherence["action_plan_documentation"]["eligible"] += 1
+            if action_plan_open_days <= int(action_plan_documentation_days):
+                adherence["action_plan_documentation"]["met"] += 1
+
+        if remediation_days is not None and closure_threshold is not None:
+            adherence["closure"]["eligible"] += 1
+            sev_bucket["closure"]["eligible"] += 1
+            if remediation_days <= int(closure_threshold):
+                adherence["closure"]["met"] += 1
+                sev_bucket["closure"]["met"] += 1
 
         if draft_creation_days is not None:
             draft_creation_values.append(draft_creation_days)
-        if issue_open_days is not None:
-            issue_open_values.append(issue_open_days)
+        if rca_completion_metric_days is not None:
+            rca_completion_values.append(rca_completion_metric_days)
         if remediation_days is not None:
             remediation_values.append(remediation_days)
 
@@ -684,31 +700,35 @@ def compute_kri(records: List[Dict[str, object]], program_config: Dict[str, obje
         "issue_inventory_tracking_and_trends": {
             "scope_size": len(scoped),
             "scope_label": "CIMO intake scoped issues",
-            "time_to_issue_draft_creation_days": {
+            "time_to_draft_logging_days": {
                 "average": mean(draft_creation_values),
                 "median": percentile(draft_creation_values, 0.5),
                 "p90": percentile(draft_creation_values, 0.9),
-                "sla_adherence": adherence_payload("draft_creation"),
+                "sla_days": draft_logging_days,
+                "sla_adherence": adherence_payload("draft_logging"),
             },
-            "time_to_issue_open_days": {
-                "average": mean(issue_open_values),
-                "median": percentile(issue_open_values, 0.5),
-                "p90": percentile(issue_open_values, 0.9),
-                "sla_adherence": adherence_payload("issue_open"),
+            "time_to_rca_completion_days": {
+                "average": mean(rca_completion_values),
+                "median": percentile(rca_completion_values, 0.5),
+                "p90": percentile(rca_completion_values, 0.9),
+                "sla_days": rca_completion_days,
+                "sla_adherence": adherence_payload("rca_completion"),
             },
             "time_to_action_plan_open_days": {
                 "average": mean(action_plan_open_values),
                 "median": percentile(action_plan_open_values, 0.5),
                 "p90": percentile(action_plan_open_values, 0.9),
                 "available_count": len(action_plan_open_values),
+                "sla_days": action_plan_documentation_days,
+                "sla_adherence": adherence_payload("action_plan_documentation"),
             },
-            "time_to_remediation_close_days": {
+            "time_to_issue_closure_days": {
                 "average": mean(remediation_values),
                 "median": percentile(remediation_values, 0.5),
                 "p90": percentile(remediation_values, 0.9),
-                "sla_adherence": adherence_payload("remediation"),
+                "sla_adherence": adherence_payload("closure"),
             },
-            "remediation_sla_by_severity": by_severity_payload,
+            "closure_sla_by_severity": by_severity_payload,
         },
         "compliance_issues_overdue": {
             "open_compliance_issues": open_total,
@@ -848,6 +868,7 @@ def build_dataset(
                 "issue_health_check": clean(row.get("issue_health_check", "")),
                 "date_issue_identified": clean(row.get("date_issue_identified", "")),
                 "record_create_date": clean(row.get("record_create_date", "")),
+                "date_rca_completed": clean(row.get("date_rca_completed", "")),
                 "issue_open_date": clean(row.get("issue_open_date", "")),
                 "date_closed": clean(row.get("date_closed", "")),
                 "action_plan_open_days_min": min(ap_create_days) if ap_create_days else None,

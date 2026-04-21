@@ -9,22 +9,13 @@
     "self_identified_keywords": [
       "Self-Identified"
     ],
-    "sla_days_by_severity": {
-      "high": {
-        "draft_creation": 7,
-        "issue_open": 7,
-        "remediation": 90
-      },
-      "moderate": {
-        "draft_creation": 14,
-        "issue_open": 14,
-        "remediation": 180
-      },
-      "low": {
-        "draft_creation": 30,
-        "issue_open": 30,
-        "remediation": 365
-      }
+    "draft_logging_days": 30,
+    "rca_completion_days": 45,
+    "action_plan_documentation_days": 10,
+    "closure_days_by_severity": {
+      "high": 180,
+      "moderate": 270,
+      "low": 365
     }
   },
   "cimo_intake_config": {

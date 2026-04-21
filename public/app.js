@@ -42,7 +42,6 @@ const els = {
   localFile: document.getElementById("localFile"),
   kpis: document.getElementById("kpis"),
   kriGrid: document.getElementById("kriGrid"),
-  rawTableBody: document.querySelector("#rawTable tbody"),
   statusTableBody: document.querySelector("#statusTable tbody"),
   sourceTableBody: document.querySelector("#sourceTable tbody"),
   meta: document.getElementById("meta"),
@@ -243,7 +242,7 @@ function applyFilters() {
       .map(normalize)
       .join(" ");
 
-    if (f.scopeOnly && !r.in_program_scope) return false;
+    if (f.scopeOnly && !r.in_cimo_intake) return false;
     if (f.search && !searchBlob.includes(normalize(f.search))) return false;
     if (f.status !== "All" && safe(r.status) !== f.status) return false;
     if (f.severity !== "All" && safe(r.severity) !== f.severity) return false;
@@ -291,18 +290,22 @@ function summarizeCimoRows(rows) {
   return summarizeRows(rows.filter((r) => r.in_cimo_intake));
 }
 
+function getBreakdownRows() {
+  return state.filteredRows.filter((r) => r.in_cimo_intake);
+}
+
 function makeStory(summary, totalAvailable, scopeOnly) {
   if (!summary.total) {
     return [
       "No records match the current filter set.",
-      "Broaden the scope or remove a filter to restore the program view.",
+      "Broaden the filters to restore the CIMO population view.",
     ];
   }
 
   const share = totalAvailable ? Math.round((summary.total / totalAvailable) * 100) : 0;
   const lines = [];
   lines.push(
-    `${summary.active} active issues remain${scopeOnly ? ` across the scoped population (${share}% of all visible records).` : "."}`,
+    `${summary.active} active issues remain${scopeOnly ? ` across the CIMO population (${share}% of all visible records).` : "."}`,
   );
   lines.push(
     `${summary.overdue} active issues are past due based on issue due date, and ${summary.dueSoon} more are due within 30 days.`,
@@ -373,7 +376,7 @@ function buildSlideModel() {
   const intake = kri.cimo_intake_detection || {};
   const filterLabels = [];
 
-  if (state.filters.scopeOnly) filterLabels.push("Scoped only");
+  if (state.filters.scopeOnly) filterLabels.push("CIMO only");
   ["status", "severity", "businessUnit", "riskDomain", "issueSource"].forEach((key) => {
     if (state.filters[key] && state.filters[key] !== "All") filterLabels.push(state.filters[key]);
   });
@@ -386,10 +389,9 @@ function buildSlideModel() {
     filters: filterLabels.length ? filterLabels.join(" | ") : "All visible records",
     storyLines: storyLines.slice(0, 3),
     kpis: [
-      ["Visible", String(summary.total)],
-      ["Open", String(summary.open)],
+      ["Active", String(summary.active)],
       ["Overdue", String(summary.overdue)],
-      ["High/Critical", String(summary.highSeverity)],
+      ["High", String(summary.highSeverity)],
       ["Self-ID", formatPercent(selfId.percent_self_identified)],
       ["CIMO Intake", formatPercent(intake.detection_rate)],
     ],
@@ -565,7 +567,7 @@ function downloadSlidePng() {
   ctx.font = "500 18px Avenir Next, Segoe UI, sans-serif";
   wrapCanvasText(
     ctx,
-    `${model.kpis[1][1]} open issues, ${model.kpis[2][1]} overdue, and ${model.kpis[5][1]} of scoped issues classified into CIMO intake. Use this slide as the headline snapshot before the detailed KRI or issue-review slides.`,
+    `${model.kpis[0][1]} active issues, ${model.kpis[1][1]} overdue, and ${model.kpis[5][1]} of all issues classified into the CIMO population. Use this slide as the headline snapshot before the detailed KRI slides.`,
     794,
     690,
     690,
@@ -611,11 +613,11 @@ function renderKri() {
   const overdue = kri.compliance_issues_overdue || {};
   const selfId = kri.self_identified_vs_overall || {};
   const intake = kri.cimo_intake_detection || {};
-  const remediationBySeverity = inventory.remediation_sla_by_severity || {};
+  const remediationBySeverity = inventory.closure_sla_by_severity || {};
 
   const severityRows = Object.entries(remediationBySeverity)
     .map(([severity, metric]) => {
-      const row = metric.remediation || {};
+      const row = metric.closure || {};
       return `<tr><td>${safe(severity)}</td><td>${safe(row.met)}</td><td>${safe(row.eligible)}</td><td>${formatPercent(row.rate)}</td></tr>`;
     })
     .join("");
@@ -624,27 +626,27 @@ function renderKri() {
     <article class="kri-card">
       <h3>1. Inventory Tracking and SLA Adherence</h3>
       <p>Scope: ${safe(inventory.scope_label)} (${safe(inventory.scope_size)} issues)</p>
-      <p>Draft creation: avg ${formatMetric(inventory.time_to_issue_draft_creation_days?.average, 1)} days, SLA ${formatPercent(inventory.time_to_issue_draft_creation_days?.sla_adherence?.rate)}</p>
-      <p>Issue open: avg ${formatMetric(inventory.time_to_issue_open_days?.average, 1)} days, SLA ${formatPercent(inventory.time_to_issue_open_days?.sla_adherence?.rate)}</p>
-      <p>Action plan open: avg ${formatMetric(inventory.time_to_action_plan_open_days?.average, 1)} days across ${safe(inventory.time_to_action_plan_open_days?.available_count)} linked records</p>
-      <p>Remediation close: avg ${formatMetric(inventory.time_to_remediation_close_days?.average, 1)} days, SLA ${formatPercent(inventory.time_to_remediation_close_days?.sla_adherence?.rate)}</p>
+      <p>Draft logging: avg ${formatMetric(inventory.time_to_draft_logging_days?.average, 1)} days, target ${safe(inventory.time_to_draft_logging_days?.sla_days)} calendar days, SLA ${formatPercent(inventory.time_to_draft_logging_days?.sla_adherence?.rate)}</p>
+      <p>RCA completion in SOR: avg ${formatMetric(inventory.time_to_rca_completion_days?.average, 1)} days, target ${safe(inventory.time_to_rca_completion_days?.sla_days)} calendar days, SLA ${formatPercent(inventory.time_to_rca_completion_days?.sla_adherence?.rate)}</p>
+      <p>Action plan documentation after Open: avg ${formatMetric(inventory.time_to_action_plan_open_days?.average, 1)} days, target ${safe(inventory.time_to_action_plan_open_days?.sla_days)} calendar days, SLA ${formatPercent(inventory.time_to_action_plan_open_days?.sla_adherence?.rate)}</p>
+      <p>Issue closure from Open: avg ${formatMetric(inventory.time_to_issue_closure_days?.average, 1)} days, SLA ${formatPercent(inventory.time_to_issue_closure_days?.sla_adherence?.rate)}</p>
       <div class="table-wrap kri-table-wrap">
         <table>
           <thead>
             <tr><th>Severity</th><th>SLA Met</th><th>Eligible</th><th>Rate</th></tr>
           </thead>
-          <tbody>${severityRows || `<tr><td colspan="4">No remediation SLA data available.</td></tr>`}</tbody>
+          <tbody>${severityRows || `<tr><td colspan="4">No closure SLA data available.</td></tr>`}</tbody>
         </table>
       </div>
     </article>
     <article class="kri-card">
       <h3>2. Compliance Issues Overdue</h3>
-      <p>${safe(overdue.open_compliance_issues_overdue)} of ${safe(overdue.open_compliance_issues)} open CIMO-scoped issues are overdue based on issue due date.</p>
+      <p>${safe(overdue.open_compliance_issues_overdue)} of ${safe(overdue.open_compliance_issues)} open issues in the CIMO population are overdue based on issue due date.</p>
       <p class="kri-emphasis">${formatPercent(overdue.percent_overdue)}</p>
     </article>
     <article class="kri-card">
       <h3>3. Self-ID Compared to Overall</h3>
-      <p>${safe(selfId.self_identified_issues)} of ${safe(selfId.overall_issues)} CIMO-scoped issues were self-identified.</p>
+      <p>${safe(selfId.self_identified_issues)} of ${safe(selfId.overall_issues)} issues in the CIMO population were self-identified.</p>
       <p class="kri-emphasis">${formatPercent(selfId.percent_self_identified)}</p>
     </article>
     <article class="kri-card">
@@ -666,40 +668,22 @@ function groupCounts(rows, key) {
 }
 
 function renderBreakdowns() {
-  els.statusTableBody.innerHTML = groupCounts(state.filteredRows, "status")
+  const rows = getBreakdownRows();
+  els.statusTableBody.innerHTML = groupCounts(rows, "status")
     .map(([label, count]) => `<tr><td>${label}</td><td>${count}</td></tr>`)
     .join("");
 
-  els.sourceTableBody.innerHTML = groupCounts(state.filteredRows, "issue_source")
+  els.sourceTableBody.innerHTML = groupCounts(rows, "issue_source")
     .slice(0, 12)
     .map(([label, count]) => `<tr><td>${label}</td><td>${count}</td></tr>`)
-    .join("");
-}
-
-function renderRaw() {
-  els.rawTableBody.innerHTML = state.filteredRows
-    .slice(0, 250)
-    .map(
-      (r) => `<tr>
-      <td>${safe(r.issue_id)}</td>
-      <td><strong>${safe(r.issue_title)}</strong><br><span class="sub">${r.in_program_scope ? "In scope" : "Out of scope"}</span></td>
-      <td>${safe(r.status)}</td>
-      <td>${safe(r.severity)}</td>
-      <td>${safe(r.business_unit)}</td>
-      <td>${safe(r.risk_domain)}</td>
-      <td>${safe(r.issue_owner_name)}<br><span class="sub">${safe(r.issue_owner_email)}</span></td>
-      <td>${safe(r.due_date)}</td>
-      <td>${safe(r.linked_action_plans_open_count)}</td>
-      </tr>`,
-    )
     .join("");
 }
 
 function renderMeta(lastUpdated) {
   const filtered = state.filteredRows.length;
   const total = state.allRows.length;
-  const scoped = state.allRows.filter((r) => r.in_program_scope).length;
-  const scopeLabel = state.filters.scopeOnly ? `Scoped rows: ${filtered}/${scoped}` : `Rows: ${filtered}/${total}`;
+  const scoped = state.allRows.filter((r) => r.in_cimo_intake).length;
+  const scopeLabel = state.filters.scopeOnly ? `CIMO rows: ${filtered}/${scoped}` : `Rows: ${filtered}/${total}`;
   els.meta.textContent = `${scopeLabel} | Last updated: ${safe(lastUpdated)}`;
 }
 
@@ -711,7 +695,6 @@ function redraw(lastUpdated = state.lastUpdated) {
   renderKpis();
   renderKri();
   renderBreakdowns();
-  renderRaw();
   renderMeta(lastUpdated);
 }
 
