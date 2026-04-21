@@ -172,6 +172,14 @@ function isHighSeverity(severity) {
   return ["high", "critical"].includes(normalize(severity));
 }
 
+function isArchivedStatus(status) {
+  return normalize(status) === "archived";
+}
+
+function isActiveStatus(status) {
+  return !isClosedStatus(status) && !isArchivedStatus(status);
+}
+
 function getUrlFilters() {
   const params = new URLSearchParams(window.location.search);
   return {
@@ -248,28 +256,32 @@ function applyFilters() {
 
 function summarizeRows(rows) {
   const today = new Date();
-  const openRows = rows.filter((r) => !isClosedStatus(r.status));
-  const overdue = openRows.filter((r) => {
+  const activeRows = rows.filter((r) => isActiveStatus(r.status));
+  const overdue = activeRows.filter((r) => {
     const due = parseDate(r.due_date);
     return due && due < today;
   });
-  const dueSoon = openRows.filter((r) => {
+  const dueSoon = activeRows.filter((r) => {
     const due = parseDate(r.due_date);
     if (!due) return false;
     const days = Math.ceil((due - today) / (1000 * 60 * 60 * 24));
     return days >= 0 && days <= 30;
   });
-  const highSeverity = rows.filter((r) => isHighSeverity(r.severity));
-  const riskAccepted = rows.filter((r) => normalize(r.status) === "risk accepted");
-  const unresolvedAps = rows.reduce((sum, r) => sum + Number(r.linked_action_plans_open_count || 0), 0);
+  const highSeverity = activeRows.filter((r) => isHighSeverity(r.severity));
+  const moderateSeverity = activeRows.filter((r) => normalize(r.severity) === "moderate").length;
+  const lowSeverity = activeRows.filter((r) => normalize(r.severity) === "low").length;
+  const riskAccepted = activeRows.filter((r) => normalize(r.status) === "risk accepted");
+  const unresolvedAps = activeRows.reduce((sum, r) => sum + Number(r.linked_action_plans_open_count || 0), 0);
 
   return {
     total: rows.length,
-    open: openRows.length,
+    active: activeRows.length,
     closed: rows.filter((r) => isClosedStatus(r.status)).length,
     overdue: overdue.length,
     dueSoon: dueSoon.length,
     highSeverity: highSeverity.length,
+    moderateSeverity,
+    lowSeverity,
     riskAccepted: riskAccepted.length,
     unresolvedAps,
   };
@@ -286,13 +298,13 @@ function makeStory(summary, totalAvailable, scopeOnly) {
   const share = totalAvailable ? Math.round((summary.total / totalAvailable) * 100) : 0;
   const lines = [];
   lines.push(
-    `${summary.open} of ${summary.total} issues are still open${scopeOnly ? ` across the scoped population (${share}% of all visible records).` : "."}`,
+    `${summary.active} active issues remain${scopeOnly ? ` across the scoped population (${share}% of all visible records).` : "."}`,
   );
   lines.push(
-    `${summary.overdue} open issues are overdue and ${summary.dueSoon} more are due within 30 days.`,
+    `${summary.overdue} active issues are past due based on issue due date, and ${summary.dueSoon} more are due within 30 days.`,
   );
   lines.push(
-    `${summary.highSeverity} issues are high or critical, ${summary.riskAccepted} sit in risk-accepted status, and ${summary.unresolvedAps} action plans remain unresolved.`,
+    `${summary.highSeverity} active issues are high, ${summary.moderateSeverity} are moderate, ${summary.lowSeverity} are low, and ${summary.riskAccepted} sit in risk-accepted status.`,
   );
   return lines;
 }
@@ -328,13 +340,13 @@ function renderUpdates() {
 function renderKpis() {
   const summary = summarizeRows(state.filteredRows);
   const cards = [
-    ["Visible issues", summary.total],
-    ["Open issues", summary.open],
+    ["Active issues", summary.active],
     ["Overdue", summary.overdue],
     ["Due in 30 days", summary.dueSoon],
-    ["High/Critical", summary.highSeverity],
+    ["High", summary.highSeverity],
+    ["Moderate", summary.moderateSeverity],
+    ["Low", summary.lowSeverity],
     ["Risk accepted", summary.riskAccepted],
-    ["Open action plans", summary.unresolvedAps],
   ];
 
   els.kpis.innerHTML = cards
@@ -603,6 +615,7 @@ function renderKri() {
   els.kriGrid.innerHTML = `
     <article class="kri-card">
       <h3>1. Inventory Tracking and SLA Adherence</h3>
+      <p>Scope: ${safe(inventory.scope_label)} (${safe(inventory.scope_size)} issues)</p>
       <p>Draft creation: avg ${formatMetric(inventory.time_to_issue_draft_creation_days?.average, 1)} days, SLA ${formatPercent(inventory.time_to_issue_draft_creation_days?.sla_adherence?.rate)}</p>
       <p>Issue open: avg ${formatMetric(inventory.time_to_issue_open_days?.average, 1)} days, SLA ${formatPercent(inventory.time_to_issue_open_days?.sla_adherence?.rate)}</p>
       <p>Action plan open: avg ${formatMetric(inventory.time_to_action_plan_open_days?.average, 1)} days across ${safe(inventory.time_to_action_plan_open_days?.available_count)} linked records</p>
@@ -618,17 +631,17 @@ function renderKri() {
     </article>
     <article class="kri-card">
       <h3>2. Compliance Issues Overdue</h3>
-      <p>${safe(overdue.open_compliance_issues_overdue)} of ${safe(overdue.open_compliance_issues)} open scoped issues are overdue.</p>
+      <p>${safe(overdue.open_compliance_issues_overdue)} of ${safe(overdue.open_compliance_issues)} open CIMO-scoped issues are overdue based on issue due date.</p>
       <p class="kri-emphasis">${formatPercent(overdue.percent_overdue)}</p>
     </article>
     <article class="kri-card">
       <h3>3. Self-ID Compared to Overall</h3>
-      <p>${safe(selfId.self_identified_issues)} of ${safe(selfId.overall_issues)} scoped issues were self-identified.</p>
+      <p>${safe(selfId.self_identified_issues)} of ${safe(selfId.overall_issues)} CIMO-scoped issues were self-identified.</p>
       <p class="kri-emphasis">${formatPercent(selfId.percent_self_identified)}</p>
     </article>
     <article class="kri-card">
       <h3>4. CIMO Intake Detection</h3>
-      <p>${safe(intake.detected_issues)} of ${safe(intake.overall_issues)} scoped issues fall into CIMO intake.</p>
+      <p>${safe(intake.detected_issues)} of ${safe(intake.overall_issues)} total issues fall into CIMO intake.</p>
       <p>Owner in Tyler structure: ${safe(intake.owner_in_compliance_hierarchy)} | Approver in Tyler structure: ${safe(intake.approver_in_compliance_hierarchy)} | Compliance L1 risk domain: ${safe(intake.compliance_level_1_risk_domain)}</p>
       <p class="kri-emphasis">${formatPercent(intake.detection_rate)}</p>
     </article>

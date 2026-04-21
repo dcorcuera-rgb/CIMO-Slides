@@ -571,7 +571,7 @@ def match_text_keywords(value: str, keywords: Sequence[str]) -> bool:
 
 
 def compute_kri(records: List[Dict[str, object]], program_config: Dict[str, object]) -> Dict[str, object]:
-    scoped = [record for record in records if record.get("in_program_scope")]
+    scoped = [record for record in records if record.get("in_cimo_intake")]
     config = build_kri_config(program_config)
     severity_thresholds = config.get("sla_days_by_severity", {})
     self_id_keywords = config.get("self_identified_keywords", [])
@@ -683,6 +683,7 @@ def compute_kri(records: List[Dict[str, object]], program_config: Dict[str, obje
     return {
         "issue_inventory_tracking_and_trends": {
             "scope_size": len(scoped),
+            "scope_label": "CIMO intake scoped issues",
             "time_to_issue_draft_creation_days": {
                 "average": mean(draft_creation_values),
                 "median": percentile(draft_creation_values, 0.5),
@@ -722,8 +723,8 @@ def compute_kri(records: List[Dict[str, object]], program_config: Dict[str, obje
         "cimo_intake_detection": {
             "configured": True,
             "detected_issues": intake_count,
-            "overall_issues": len(scoped),
-            "detection_rate": safe_ratio(intake_count, len(scoped)),
+            "overall_issues": len(records),
+            "detection_rate": safe_ratio(intake_count, len(records)),
             "owner_in_compliance_hierarchy": owner_hierarchy_count,
             "approver_in_compliance_hierarchy": approver_hierarchy_count,
             "compliance_level_1_risk_domain": compliance_risk_domain_count,

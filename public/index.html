@@ -8,23 +8,34 @@
   </head>
   <body>
     <header class="topbar">
-      <div class="hero-copy">
-        <p class="eyebrow">Monthly Reporting</p>
-        <h1 id="pageTitle">Program Health Dashboard</h1>
-        <p class="sub" id="pageSubtitle">Scored issue population, health indicators, and monthly narrative updates.</p>
+      <div class="topbar-meta">
+        <span class="brand-mark">block</span>
+        <span class="section-label">Program Health</span>
       </div>
       <div class="meta" id="meta"></div>
     </header>
 
     <main>
-      <section class="hero-grid">
-        <section class="panel story-panel">
+      <section class="hero-layout">
+        <section class="hero-copy">
+          <p class="eyebrow">Monthly Reporting</p>
+          <h1 id="pageTitle">Program Health Dashboard</h1>
+          <p class="sub hero-sub" id="pageSubtitle">Scored issue population, health indicators, and monthly narrative updates.</p>
+        </section>
+        <section class="hero-stage panel">
           <h2>Health Story</h2>
           <div id="storySummary" class="story-summary"></div>
         </section>
+      </section>
+
+      <section class="hero-grid">
         <section class="panel updates-panel">
           <h2>Program Updates</h2>
           <div id="updatesList" class="updates-list"></div>
+        </section>
+        <section class="panel stage-panel">
+          <h2>Reporting Lens</h2>
+          <p class="stage-copy">Use the filters, KRIs, and slide export below to move from working dashboard to deck-ready monthly narrative.</p>
         </section>
       </section>
 
