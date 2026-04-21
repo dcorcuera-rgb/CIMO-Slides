@@ -1,7 +1,7 @@
 const DATA_PATH = "./data/dashboard-data.json";
 
 const DEFAULT_FILTERS = {
-  scopeOnly: true,
+  complianceOwnedOnly: false,
   search: "",
   status: "All",
   severity: "All",
@@ -24,7 +24,7 @@ const els = {
   pageSubtitle: document.getElementById("pageSubtitle"),
   storySummary: document.getElementById("storySummary"),
   updatesList: document.getElementById("updatesList"),
-  scopeOnly: document.getElementById("scopeOnly"),
+  complianceOwnedOnly: document.getElementById("complianceOwnedOnly"),
   search: document.getElementById("search"),
   status: document.getElementById("status"),
   severity: document.getElementById("severity"),
@@ -182,7 +182,7 @@ function isActiveStatus(status) {
 function getUrlFilters() {
   const params = new URLSearchParams(window.location.search);
   return {
-    scopeOnly: params.get("scopeOnly") !== "false",
+    complianceOwnedOnly: params.get("complianceOwnedOnly") === "true",
     search: params.get("search") || "",
     status: params.get("status") || "All",
     severity: params.get("severity") || "All",
@@ -195,8 +195,8 @@ function getUrlFilters() {
 function setUrlFilters() {
   const params = new URLSearchParams();
   Object.entries(state.filters).forEach(([k, v]) => {
-    if (k === "scopeOnly") {
-      if (!v) params.set(k, "false");
+    if (k === "complianceOwnedOnly") {
+      if (v) params.set(k, "true");
       return;
     }
     if (v && v !== "All") params.set(k, v);
@@ -218,7 +218,7 @@ function fillSelect(selectEl, values, selected) {
 }
 
 function hydrateControls() {
-  els.scopeOnly.checked = Boolean(state.filters.scopeOnly);
+  els.complianceOwnedOnly.checked = Boolean(state.filters.complianceOwnedOnly);
   els.search.value = state.filters.search;
   fillSelect(els.status, state.allRows.map((r) => safe(r.status)), state.filters.status);
   fillSelect(els.severity, state.allRows.map((r) => safe(r.severity)), state.filters.severity);
@@ -227,29 +227,34 @@ function hydrateControls() {
   fillSelect(els.issueSource, state.allRows.map((r) => safe(r.issue_source)), state.filters.issueSource);
 }
 
-function applyFilters() {
+function matchesSharedFilters(r) {
   const f = state.filters;
-  state.filteredRows = state.allRows.filter((r) => {
-    const searchBlob = [
-      r.issue_id,
-      r.issue_title,
-      r.issue_owner_name,
-      r.issue_owner_email,
-      r.business_unit,
-      r.risk_domain,
-      r.issue_source,
-    ]
-      .map(normalize)
-      .join(" ");
+  const searchBlob = [
+    r.issue_id,
+    r.issue_title,
+    r.issue_owner_name,
+    r.issue_owner_email,
+    r.business_unit,
+    r.risk_domain,
+    r.issue_source,
+  ]
+    .map(normalize)
+    .join(" ");
 
-    if (f.scopeOnly && !r.in_cimo_intake) return false;
-    if (f.search && !searchBlob.includes(normalize(f.search))) return false;
-    if (f.status !== "All" && safe(r.status) !== f.status) return false;
-    if (f.severity !== "All" && safe(r.severity) !== f.severity) return false;
-    if (f.businessUnit !== "All" && safe(r.business_unit) !== f.businessUnit) return false;
-    if (f.riskDomain !== "All" && safe(r.risk_domain) !== f.riskDomain) return false;
-    if (f.issueSource !== "All" && safe(r.issue_source) !== f.issueSource) return false;
-    return true;
+  if (f.search && !searchBlob.includes(normalize(f.search))) return false;
+  if (f.status !== "All" && safe(r.status) !== f.status) return false;
+  if (f.severity !== "All" && safe(r.severity) !== f.severity) return false;
+  if (f.businessUnit !== "All" && safe(r.business_unit) !== f.businessUnit) return false;
+  if (f.riskDomain !== "All" && safe(r.risk_domain) !== f.riskDomain) return false;
+  if (f.issueSource !== "All" && safe(r.issue_source) !== f.issueSource) return false;
+  return true;
+}
+
+function applyFilters() {
+  state.filteredRows = state.allRows.filter((r) => {
+    if (!r.in_cimo_intake) return false;
+    if (state.filters.complianceOwnedOnly && !r.cimo_owner_in_compliance_hierarchy) return false;
+    return matchesSharedFilters(r);
   });
 }
 
@@ -270,6 +275,7 @@ function summarizeRows(rows) {
   const moderateSeverity = activeRows.filter((r) => normalize(r.severity) === "moderate").length;
   const lowSeverity = activeRows.filter((r) => normalize(r.severity) === "low").length;
   const riskAccepted = activeRows.filter((r) => normalize(r.status) === "risk accepted");
+  const rejected = activeRows.filter((r) => normalize(r.status) === "rejected").length;
   const unresolvedAps = activeRows.reduce((sum, r) => sum + Number(r.linked_action_plans_open_count || 0), 0);
 
   return {
@@ -282,6 +288,7 @@ function summarizeRows(rows) {
     moderateSeverity,
     lowSeverity,
     riskAccepted: riskAccepted.length,
+    rejected,
     unresolvedAps,
   };
 }
@@ -294,18 +301,18 @@ function getBreakdownRows() {
   return state.filteredRows.filter((r) => r.in_cimo_intake);
 }
 
-function makeStory(summary, totalAvailable, scopeOnly) {
+function makeStory(summary, totalAvailable, complianceOwnedOnly) {
   if (!summary.total) {
     return [
       "No records match the current filter set.",
-      "Broaden the filters to restore the CIMO population view.",
+      `Broaden the filters to restore the ${complianceOwnedOnly ? "Compliance-owned" : "CIMO"} population view.`,
     ];
   }
 
   const share = totalAvailable ? Math.round((summary.total / totalAvailable) * 100) : 0;
   const lines = [];
   lines.push(
-    `${summary.active} active issues remain${scopeOnly ? ` across the CIMO population (${share}% of all visible records).` : "."}`,
+    `${summary.active} active issues remain across the ${complianceOwnedOnly ? "Compliance-owned" : "CIMO"} population (${share}% of all visible records).`,
   );
   lines.push(
     `${summary.overdue} active issues are past due based on issue due date, and ${summary.dueSoon} more are due within 30 days.`,
@@ -317,8 +324,12 @@ function makeStory(summary, totalAvailable, scopeOnly) {
 }
 
 function renderStory() {
+  const comparisonRows = state.allRows.filter((r) => matchesSharedFilters(r));
   const summary = summarizeRows(state.filteredRows);
-  const lines = makeStory(summary, state.allRows.length, state.filters.scopeOnly);
+  const totalAvailable = state.filters.complianceOwnedOnly
+    ? comparisonRows.filter((r) => r.cimo_owner_in_compliance_hierarchy).length
+    : comparisonRows.filter((r) => r.in_cimo_intake).length;
+  const lines = makeStory(summary, totalAvailable, state.filters.complianceOwnedOnly);
   els.storySummary.innerHTML = lines.map((line) => `<p>${line}</p>`).join("");
 }
 
@@ -345,38 +356,42 @@ function renderUpdates() {
 }
 
 function renderKpis() {
-  const summary = summarizeRows(state.filteredRows);
-  const cimoSummary = summarizeCimoRows(state.filteredRows);
+  const comparisonRows = state.allRows.filter((r) => matchesSharedFilters(r));
+  const summary = summarizeRows(comparisonRows);
+  const cimoSummary = summarizeCimoRows(comparisonRows);
+  const ownedSummary = summarizeRows(comparisonRows.filter((r) => r.cimo_owner_in_compliance_hierarchy));
   const cards = [
-    ["Active issues", `${summary.active} / ${cimoSummary.active}`],
-    ["Overdue", `${summary.overdue} / ${cimoSummary.overdue}`],
-    ["Due in 30 days", `${summary.dueSoon} / ${cimoSummary.dueSoon}`],
-    ["High", `${summary.highSeverity} / ${cimoSummary.highSeverity}`],
-    ["Moderate", `${summary.moderateSeverity} / ${cimoSummary.moderateSeverity}`],
-    ["Low", `${summary.lowSeverity} / ${cimoSummary.lowSeverity}`],
-    ["Risk accepted", `${summary.riskAccepted} / ${cimoSummary.riskAccepted}`],
+    ["Active issues", `${summary.active} / ${cimoSummary.active} / ${ownedSummary.active}`],
+    ["Overdue", `${summary.overdue} / ${cimoSummary.overdue} / ${ownedSummary.overdue}`],
+    ["Due in 30 days", `${summary.dueSoon} / ${cimoSummary.dueSoon} / ${ownedSummary.dueSoon}`],
+    ["High", `${summary.highSeverity} / ${cimoSummary.highSeverity} / ${ownedSummary.highSeverity}`],
+    ["Moderate", `${summary.moderateSeverity} / ${cimoSummary.moderateSeverity} / ${ownedSummary.moderateSeverity}`],
+    ["Low", `${summary.lowSeverity} / ${cimoSummary.lowSeverity} / ${ownedSummary.lowSeverity}`],
+    ["Risk accepted", `${summary.riskAccepted} / ${cimoSummary.riskAccepted} / ${ownedSummary.riskAccepted}`],
+    ["Rejected", `${summary.rejected} / ${cimoSummary.rejected} / ${ownedSummary.rejected}`],
   ];
 
   els.kpis.innerHTML = cards
     .map(
       ([label, value]) =>
-        `<div class="kpi"><div class="value">${value}</div><div class="label">${label}</div><div class="kpi-note">All / CIMO</div></div>`,
+        `<div class="kpi"><div class="value">${value}</div><div class="label">${label}</div><div class="kpi-note">All / CIMO / Owned</div></div>`,
     )
     .join("");
 }
 
 function buildSlideModel() {
   const summary = summarizeRows(state.filteredRows);
-  const storyLines = makeStory(summary, state.allRows.length, state.filters.scopeOnly);
+  const storyLines = makeStory(summary, state.filteredRows.length, state.filters.complianceOwnedOnly);
   const statusTop = groupCounts(state.filteredRows, "status").slice(0, 3);
   const sourceTop = groupCounts(state.filteredRows, "issue_source").slice(0, 3);
-  const kri = state.dataset?.kri || {};
+  const kri = (state.filters.complianceOwnedOnly ? state.dataset?.compliance_owned_kri : state.dataset?.kri) || {};
   const overdue = kri.compliance_issues_overdue || {};
   const selfId = kri.self_identified_vs_overall || {};
   const intake = kri.cimo_intake_detection || {};
   const filterLabels = [];
 
-  if (state.filters.scopeOnly) filterLabels.push("CIMO only");
+  filterLabels.push("CIMO population");
+  if (state.filters.complianceOwnedOnly) filterLabels.push("Compliance-owned only");
   ["status", "severity", "businessUnit", "riskDomain", "issueSource"].forEach((key) => {
     if (state.filters[key] && state.filters[key] !== "All") filterLabels.push(state.filters[key]);
   });
@@ -603,7 +618,7 @@ function buildSlideNotes() {
 }
 
 function renderKri() {
-  const kri = state.dataset?.kri;
+  const kri = state.filters.complianceOwnedOnly ? state.dataset?.compliance_owned_kri : state.dataset?.kri;
   if (!kri) {
     els.kriGrid.innerHTML = `<div class="update-card"><p>KRI metrics are not available for this dataset.</p></div>`;
     return;
@@ -612,31 +627,63 @@ function renderKri() {
   const inventory = kri.issue_inventory_tracking_and_trends || {};
   const overdue = kri.compliance_issues_overdue || {};
   const selfId = kri.self_identified_vs_overall || {};
-  const intake = kri.cimo_intake_detection || {};
   const remediationBySeverity = inventory.closure_sla_by_severity || {};
 
-  const severityRows = Object.entries(remediationBySeverity)
+  function renderSlaMetric(title, metric, subtitle) {
+    const targetLabel = metric?.sla_days != null ? `Target ${safe(metric?.sla_days)}d` : "Severity-based target";
+    return `<div class="sla-metric">
+      <div class="sla-head">
+        <div>
+          <h4>${title}</h4>
+          <p>${subtitle}</p>
+        </div>
+        <div class="sla-target">${targetLabel}</div>
+      </div>
+      <div class="sla-stats">
+        <div><span>Avg</span><strong>${formatMetric(metric?.average, 1)}d</strong></div>
+        <div><span>Median</span><strong>${formatMetric(metric?.median)}d</strong></div>
+        <div><span>P90</span><strong>${formatMetric(metric?.p90)}d</strong></div>
+      </div>
+      <div class="rate-block">
+        <div class="rate-copy">
+          <span>SLA adherence</span>
+          <strong>${formatPercent(metric?.sla_adherence?.rate)}</strong>
+          <em>${safe(metric?.sla_adherence?.met)} met / ${safe(metric?.sla_adherence?.eligible)} eligible</em>
+        </div>
+        <div class="rate-bar"><span style="width:${Math.round((Number(metric?.sla_adherence?.rate || 0)) * 100)}%"></span></div>
+      </div>
+    </div>`;
+  }
+
+  const severityBars = Object.entries(remediationBySeverity)
+    .filter(([severity]) => severity !== "not yet determined")
     .map(([severity, metric]) => {
       const row = metric.closure || {};
-      return `<tr><td>${safe(severity)}</td><td>${safe(row.met)}</td><td>${safe(row.eligible)}</td><td>${formatPercent(row.rate)}</td></tr>`;
+      const pct = Math.round((Number(row.rate || 0)) * 100);
+      return `<div class="severity-bar">
+        <div class="severity-copy">
+          <span>${safe(severity)}</span>
+          <em>${safe(row.met)} / ${safe(row.eligible)}</em>
+        </div>
+        <div class="severity-track"><span style="width:${pct}%"></span></div>
+        <strong>${formatPercent(row.rate)}</strong>
+      </div>`;
     })
     .join("");
 
   els.kriGrid.innerHTML = `
-    <article class="kri-card">
+    <article class="kri-card kri-card-wide">
       <h3>1. Inventory Tracking and SLA Adherence</h3>
       <p>Scope: ${safe(inventory.scope_label)} (${safe(inventory.scope_size)} issues)</p>
-      <p>Draft logging: avg ${formatMetric(inventory.time_to_draft_logging_days?.average, 1)} days, target ${safe(inventory.time_to_draft_logging_days?.sla_days)} calendar days, SLA ${formatPercent(inventory.time_to_draft_logging_days?.sla_adherence?.rate)}</p>
-      <p>RCA completion in SOR: avg ${formatMetric(inventory.time_to_rca_completion_days?.average, 1)} days, target ${safe(inventory.time_to_rca_completion_days?.sla_days)} calendar days, SLA ${formatPercent(inventory.time_to_rca_completion_days?.sla_adherence?.rate)}</p>
-      <p>Action plan documentation after Open: avg ${formatMetric(inventory.time_to_action_plan_open_days?.average, 1)} days, target ${safe(inventory.time_to_action_plan_open_days?.sla_days)} calendar days, SLA ${formatPercent(inventory.time_to_action_plan_open_days?.sla_adherence?.rate)}</p>
-      <p>Issue closure from Open: avg ${formatMetric(inventory.time_to_issue_closure_days?.average, 1)} days, SLA ${formatPercent(inventory.time_to_issue_closure_days?.sla_adherence?.rate)}</p>
-      <div class="table-wrap kri-table-wrap">
-        <table>
-          <thead>
-            <tr><th>Severity</th><th>SLA Met</th><th>Eligible</th><th>Rate</th></tr>
-          </thead>
-          <tbody>${severityRows || `<tr><td colspan="4">No closure SLA data available.</td></tr>`}</tbody>
-        </table>
+      <div class="sla-grid">
+        ${renderSlaMetric("Draft logging", inventory.time_to_draft_logging_days, "Issue identified to Draft")}
+        ${renderSlaMetric("RCA completion", inventory.time_to_rca_completion_days, "Issue creation to RCA in SOR")}
+        ${renderSlaMetric("Action plan documentation", inventory.time_to_action_plan_open_days, "Issue Open to AP documentation")}
+        ${renderSlaMetric("Issue closure", inventory.time_to_issue_closure_days, "Issue Open to validated closure")}
+      </div>
+      <div class="severity-panel">
+        <h4>Closure SLA by severity</h4>
+        ${severityBars || `<p>No closure SLA data available.</p>`}
       </div>
     </article>
     <article class="kri-card">
@@ -646,14 +693,8 @@ function renderKri() {
     </article>
     <article class="kri-card">
       <h3>3. Self-ID Compared to Overall</h3>
-      <p>${safe(selfId.self_identified_issues)} of ${safe(selfId.overall_issues)} issues in the CIMO population were self-identified.</p>
+      <p>${safe(selfId.self_identified_issues)} of ${safe(selfId.overall_issues)} active issues in the ${state.filters.complianceOwnedOnly ? "Compliance-owned" : "CIMO"} population were self-identified.</p>
       <p class="kri-emphasis">${formatPercent(selfId.percent_self_identified)}</p>
-    </article>
-    <article class="kri-card">
-      <h3>4. CIMO Intake Detection</h3>
-      <p>${safe(intake.detected_issues)} of ${safe(intake.overall_issues)} total issues fall into CIMO intake.</p>
-      <p>Owner in Tyler structure: ${safe(intake.owner_in_compliance_hierarchy)} | Approver in Tyler structure: ${safe(intake.approver_in_compliance_hierarchy)} | Compliance L1 risk domain: ${safe(intake.compliance_level_1_risk_domain)}</p>
-      <p class="kri-emphasis">${formatPercent(intake.detection_rate)}</p>
     </article>
   `;
 }
@@ -682,8 +723,11 @@ function renderBreakdowns() {
 function renderMeta(lastUpdated) {
   const filtered = state.filteredRows.length;
   const total = state.allRows.length;
-  const scoped = state.allRows.filter((r) => r.in_cimo_intake).length;
-  const scopeLabel = state.filters.scopeOnly ? `CIMO rows: ${filtered}/${scoped}` : `Rows: ${filtered}/${total}`;
+  const cimo = state.allRows.filter((r) => r.in_cimo_intake).length;
+  const owned = state.allRows.filter((r) => r.cimo_owner_in_compliance_hierarchy).length;
+  const scopeLabel = state.filters.complianceOwnedOnly
+    ? `Compliance-owned rows: ${filtered}/${owned}`
+    : `CIMO rows: ${filtered}/${cimo}`;
   els.meta.textContent = `${scopeLabel} | Last updated: ${safe(lastUpdated)}`;
 }
 
@@ -699,8 +743,8 @@ function redraw(lastUpdated = state.lastUpdated) {
 }
 
 function bindEvents() {
-  els.scopeOnly.addEventListener("change", (e) => {
-    state.filters.scopeOnly = e.target.checked;
+  els.complianceOwnedOnly.addEventListener("change", (e) => {
+    state.filters.complianceOwnedOnly = e.target.checked;
     redraw();
   });
 

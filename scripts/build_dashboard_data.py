@@ -577,6 +577,20 @@ def match_text_keywords(value: str, keywords: Sequence[str]) -> bool:
 
 def compute_kri(records: List[Dict[str, object]], program_config: Dict[str, object]) -> Dict[str, object]:
     scoped = [record for record in records if record.get("in_cimo_intake")]
+    return compute_kri_for_subset(
+        records,
+        scoped,
+        program_config,
+        scope_label="CIMO population",
+    )
+
+
+def compute_kri_for_subset(
+    all_records: List[Dict[str, object]],
+    scoped: List[Dict[str, object]],
+    program_config: Dict[str, object],
+    scope_label: str,
+) -> Dict[str, object]:
     config = build_kri_config(program_config)
     draft_logging_days = config.get("draft_logging_days")
     rca_completion_days = config.get("rca_completion_days")
@@ -598,6 +612,7 @@ def compute_kri(records: List[Dict[str, object]], program_config: Dict[str, obje
 
     overdue_open = 0
     open_total = 0
+    active_scoped_total = 0
     self_identified_count = 0
     intake_count = 0
     owner_hierarchy_count = 0
@@ -665,10 +680,15 @@ def compute_kri(records: List[Dict[str, object]], program_config: Dict[str, obje
 
         if not is_closed_status(str(record.get("status", ""))):
             open_total += 1
+            active_scoped_total += 1
             if bool(record.get("is_overdue")):
                 overdue_open += 1
 
-        if isinstance(self_id_keywords, list) and match_text_keywords(str(record.get("issue_source", "")), self_id_keywords):
+        if (
+            not is_closed_status(str(record.get("status", "")))
+            and isinstance(self_id_keywords, list)
+            and match_text_keywords(str(record.get("issue_source", "")), self_id_keywords)
+        ):
             self_identified_count += 1
 
         if bool(record.get("cimo_owner_in_compliance_hierarchy")):
@@ -699,7 +719,7 @@ def compute_kri(records: List[Dict[str, object]], program_config: Dict[str, obje
     return {
         "issue_inventory_tracking_and_trends": {
             "scope_size": len(scoped),
-            "scope_label": "CIMO intake scoped issues",
+            "scope_label": scope_label,
             "time_to_draft_logging_days": {
                 "average": mean(draft_creation_values),
                 "median": percentile(draft_creation_values, 0.5),
@@ -737,14 +757,14 @@ def compute_kri(records: List[Dict[str, object]], program_config: Dict[str, obje
         },
         "self_identified_vs_overall": {
             "self_identified_issues": self_identified_count,
-            "overall_issues": len(scoped),
-            "percent_self_identified": safe_ratio(self_identified_count, len(scoped)),
+            "overall_issues": active_scoped_total,
+            "percent_self_identified": safe_ratio(self_identified_count, active_scoped_total),
         },
         "cimo_intake_detection": {
             "configured": True,
             "detected_issues": intake_count,
-            "overall_issues": len(records),
-            "detection_rate": safe_ratio(intake_count, len(records)),
+            "overall_issues": len(all_records),
+            "detection_rate": safe_ratio(intake_count, len(all_records)),
             "owner_in_compliance_hierarchy": owner_hierarchy_count,
             "approver_in_compliance_hierarchy": approver_hierarchy_count,
             "compliance_level_1_risk_domain": compliance_risk_domain_count,
@@ -918,6 +938,12 @@ def build_dataset(
         parse_int(str(record.get("linked_action_plans_open_count", 0))) for record in scoped_records
     )
     kri = compute_kri(records, program_config)
+    compliance_owned_kri = compute_kri_for_subset(
+        records,
+        [record for record in records if record.get("cimo_owner_in_compliance_hierarchy")],
+        program_config,
+        scope_label="Compliance-owned issues in the CIMO population",
+    )
 
     return {
         "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
@@ -946,6 +972,7 @@ def build_dataset(
             },
         },
         "kri": kri,
+        "compliance_owned_kri": compliance_owned_kri,
         "records": records,
     }
 
