@@ -550,6 +550,18 @@ def safe_ratio(numerator: int, denominator: int) -> Optional[float]:
     return numerator / denominator
 
 
+def quarter_key(value: Optional[datetime]) -> Optional[str]:
+    if not value:
+        return None
+    quarter = ((value.month - 1) // 3) + 1
+    return f"{value.year}-Q{quarter}"
+
+
+def quarter_label(key: str) -> str:
+    year, quarter = key.split("-Q")
+    return f"Q{quarter} {year}"
+
+
 def build_kri_config(program_config: Dict[str, object]) -> Dict[str, object]:
     defaults = {
         "self_identified_keywords": ["Self-Identified"],
@@ -597,6 +609,7 @@ def compute_kri_for_subset(
     action_plan_documentation_days = config.get("action_plan_documentation_days")
     closure_days_by_severity = config.get("closure_days_by_severity", {})
     self_id_keywords = config.get("self_identified_keywords", [])
+    quarterly: Dict[str, Dict[str, int]] = {}
 
     draft_creation_values: List[int] = []
     rca_completion_values: List[int] = []
@@ -635,6 +648,8 @@ def compute_kri_for_subset(
         issue_open_at = parse_datetime(str(record.get("issue_open_date", "")))
         remediation_days = days_between(issue_open_at, closed_at)
         action_plan_open_days = record.get("action_plan_open_days_min")
+        cohort_at = issue_open_at or created_at
+        cohort_key = quarter_key(cohort_at)
         if isinstance(action_plan_open_days, int):
             action_plan_open_values.append(action_plan_open_days)
 
@@ -649,27 +664,63 @@ def compute_kri_for_subset(
             },
         )
 
+        if cohort_key:
+            bucket = quarterly.setdefault(
+                cohort_key,
+                {
+                    "issues": 0,
+                    "active_issues": 0,
+                    "overdue_issues": 0,
+                    "self_identified_issues": 0,
+                    "draft_logging_met": 0,
+                    "draft_logging_eligible": 0,
+                    "rca_completion_met": 0,
+                    "rca_completion_eligible": 0,
+                    "action_plan_documentation_met": 0,
+                    "action_plan_documentation_eligible": 0,
+                    "closure_met": 0,
+                    "closure_eligible": 0,
+                },
+            )
+            bucket["issues"] += 1
+
         if draft_creation_days is not None and draft_logging_days is not None:
             adherence["draft_logging"]["eligible"] += 1
+            if cohort_key:
+                quarterly[cohort_key]["draft_logging_eligible"] += 1
             if draft_creation_days <= int(draft_logging_days):
                 adherence["draft_logging"]["met"] += 1
+                if cohort_key:
+                    quarterly[cohort_key]["draft_logging_met"] += 1
 
         if rca_completion_metric_days is not None and rca_completion_days is not None:
             adherence["rca_completion"]["eligible"] += 1
+            if cohort_key:
+                quarterly[cohort_key]["rca_completion_eligible"] += 1
             if rca_completion_metric_days <= int(rca_completion_days):
                 adherence["rca_completion"]["met"] += 1
+                if cohort_key:
+                    quarterly[cohort_key]["rca_completion_met"] += 1
 
         if isinstance(action_plan_open_days, int) and action_plan_documentation_days is not None:
             adherence["action_plan_documentation"]["eligible"] += 1
+            if cohort_key:
+                quarterly[cohort_key]["action_plan_documentation_eligible"] += 1
             if action_plan_open_days <= int(action_plan_documentation_days):
                 adherence["action_plan_documentation"]["met"] += 1
+                if cohort_key:
+                    quarterly[cohort_key]["action_plan_documentation_met"] += 1
 
         if remediation_days is not None and closure_threshold is not None:
             adherence["closure"]["eligible"] += 1
             sev_bucket["closure"]["eligible"] += 1
+            if cohort_key:
+                quarterly[cohort_key]["closure_eligible"] += 1
             if remediation_days <= int(closure_threshold):
                 adherence["closure"]["met"] += 1
                 sev_bucket["closure"]["met"] += 1
+                if cohort_key:
+                    quarterly[cohort_key]["closure_met"] += 1
 
         if draft_creation_days is not None:
             draft_creation_values.append(draft_creation_days)
@@ -681,8 +732,12 @@ def compute_kri_for_subset(
         if not is_closed_status(str(record.get("status", ""))):
             open_total += 1
             active_scoped_total += 1
+            if cohort_key:
+                quarterly[cohort_key]["active_issues"] += 1
             if bool(record.get("is_overdue")):
                 overdue_open += 1
+                if cohort_key:
+                    quarterly[cohort_key]["overdue_issues"] += 1
 
         if (
             not is_closed_status(str(record.get("status", "")))
@@ -690,6 +745,8 @@ def compute_kri_for_subset(
             and match_text_keywords(str(record.get("issue_source", "")), self_id_keywords)
         ):
             self_identified_count += 1
+            if cohort_key:
+                quarterly[cohort_key]["self_identified_issues"] += 1
 
         if bool(record.get("cimo_owner_in_compliance_hierarchy")):
             owner_hierarchy_count += 1
@@ -716,10 +773,43 @@ def compute_kri_for_subset(
             for metric, values in metrics.items()
         }
 
+    quarter_keys = sorted(quarterly.keys())[-4:]
+    quarterly_trends = []
+    for key in quarter_keys:
+        bucket = quarterly[key]
+        active_issues = bucket["active_issues"]
+        quarterly_trends.append(
+            {
+                "quarter": key,
+                "label": quarter_label(key),
+                "issues": bucket["issues"],
+                "active_issues": active_issues,
+                "overdue_rate": safe_ratio(bucket["overdue_issues"], active_issues),
+                "self_identified_rate": safe_ratio(bucket["self_identified_issues"], active_issues),
+                "draft_logging_rate": safe_ratio(bucket["draft_logging_met"], bucket["draft_logging_eligible"]),
+                "draft_logging_met": bucket["draft_logging_met"],
+                "draft_logging_eligible": bucket["draft_logging_eligible"],
+                "rca_completion_rate": safe_ratio(bucket["rca_completion_met"], bucket["rca_completion_eligible"]),
+                "rca_completion_met": bucket["rca_completion_met"],
+                "rca_completion_eligible": bucket["rca_completion_eligible"],
+                "action_plan_documentation_rate": safe_ratio(
+                    bucket["action_plan_documentation_met"], bucket["action_plan_documentation_eligible"]
+                ),
+                "action_plan_documentation_met": bucket["action_plan_documentation_met"],
+                "action_plan_documentation_eligible": bucket["action_plan_documentation_eligible"],
+                "closure_rate": safe_ratio(bucket["closure_met"], bucket["closure_eligible"]),
+                "closure_met": bucket["closure_met"],
+                "closure_eligible": bucket["closure_eligible"],
+                "overdue_issues": bucket["overdue_issues"],
+                "self_identified_issues": bucket["self_identified_issues"],
+            }
+        )
+
     return {
         "issue_inventory_tracking_and_trends": {
             "scope_size": len(scoped),
             "scope_label": scope_label,
+            "quarterly_trends": quarterly_trends,
             "time_to_draft_logging_days": {
                 "average": mean(draft_creation_values),
                 "median": percentile(draft_creation_values, 0.5),

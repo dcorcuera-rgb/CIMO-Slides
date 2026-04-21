@@ -179,6 +179,10 @@ function isActiveStatus(status) {
   return !isClosedStatus(status) && !isArchivedStatus(status);
 }
 
+function isPendingValidationStatus(status) {
+  return normalize(status) === "pending validation";
+}
+
 function getUrlFilters() {
   const params = new URLSearchParams(window.location.search);
   return {
@@ -261,11 +265,13 @@ function applyFilters() {
 function summarizeRows(rows) {
   const today = new Date();
   const activeRows = rows.filter((r) => isActiveStatus(r.status));
-  const overdue = activeRows.filter((r) => {
+  const pendingValidation = activeRows.filter((r) => isPendingValidationStatus(r.status));
+  const overdueEligibleRows = activeRows.filter((r) => !isPendingValidationStatus(r.status));
+  const overdue = overdueEligibleRows.filter((r) => {
     const due = parseDate(r.due_date);
     return due && due < today;
   });
-  const dueSoon = activeRows.filter((r) => {
+  const dueSoon = overdueEligibleRows.filter((r) => {
     const due = parseDate(r.due_date);
     if (!due) return false;
     const days = Math.ceil((due - today) / (1000 * 60 * 60 * 24));
@@ -289,6 +295,7 @@ function summarizeRows(rows) {
     lowSeverity,
     riskAccepted: riskAccepted.length,
     rejected,
+    pendingValidation: pendingValidation.length,
     unresolvedAps,
   };
 }
@@ -363,6 +370,7 @@ function renderKpis() {
   const cards = [
     ["Active issues", `${summary.active} / ${cimoSummary.active} / ${ownedSummary.active}`],
     ["Overdue", `${summary.overdue} / ${cimoSummary.overdue} / ${ownedSummary.overdue}`],
+    ["Pending validation", `${summary.pendingValidation} / ${cimoSummary.pendingValidation} / ${ownedSummary.pendingValidation}`],
     ["Due in 30 days", `${summary.dueSoon} / ${cimoSummary.dueSoon} / ${ownedSummary.dueSoon}`],
     ["High", `${summary.highSeverity} / ${cimoSummary.highSeverity} / ${ownedSummary.highSeverity}`],
     ["Moderate", `${summary.moderateSeverity} / ${cimoSummary.moderateSeverity} / ${ownedSummary.moderateSeverity}`],
@@ -627,75 +635,90 @@ function renderKri() {
   const inventory = kri.issue_inventory_tracking_and_trends || {};
   const overdue = kri.compliance_issues_overdue || {};
   const selfId = kri.self_identified_vs_overall || {};
-  const remediationBySeverity = inventory.closure_sla_by_severity || {};
+  const trends = inventory.quarterly_trends || [];
+  const currentQuarter = trends.at(-1) || {};
 
-  function renderSlaMetric(title, metric, subtitle) {
-    const targetLabel = metric?.sla_days != null ? `Target ${safe(metric?.sla_days)}d` : "Severity-based target";
-    return `<div class="sla-metric">
-      <div class="sla-head">
-        <div>
-          <h4>${title}</h4>
-          <p>${subtitle}</p>
+  function renderTrendCard(title, field, subtitle, metric, metField, eligibleField) {
+    const bars = trends
+      .map((quarter) => {
+        const pct = Math.round((Number(quarter?.[field] || 0)) * 100);
+        return `<div class="trend-bar">
+          <span class="trend-label">${safe(quarter.label)}</span>
+          <div class="trend-track"><span style="height:${Math.max(pct, 4)}%"></span></div>
+          <strong>${formatPercent(quarter?.[field])}</strong>
+        </div>`;
+      })
+      .join("");
+    const currentMet = currentQuarter?.[metField];
+    const currentEligible = currentQuarter?.[eligibleField];
+    return `<div class="trend-card">
+      <div class="trend-head">
+        <h4>${title}</h4>
+        <p>${subtitle}</p>
+      </div>
+      <div class="trend-summary">
+        <div class="trend-rate">
+          <span>Current quarter within target</span>
+          <strong>${formatPercent(currentQuarter?.[field])}</strong>
+          <em>${safe(currentMet)} met / ${safe(currentEligible)} eligible</em>
         </div>
-        <div class="sla-target">${targetLabel}</div>
-      </div>
-      <div class="sla-stats">
-        <div><span>Avg</span><strong>${formatMetric(metric?.average, 1)}d</strong></div>
-        <div><span>Median</span><strong>${formatMetric(metric?.median)}d</strong></div>
-        <div><span>P90</span><strong>${formatMetric(metric?.p90)}d</strong></div>
-      </div>
-      <div class="rate-block">
-        <div class="rate-copy">
-          <span>SLA adherence</span>
-          <strong>${formatPercent(metric?.sla_adherence?.rate)}</strong>
-          <em>${safe(metric?.sla_adherence?.met)} met / ${safe(metric?.sla_adherence?.eligible)} eligible</em>
+        <div class="trend-stats">
+          <div><span>Average days</span><strong>${formatMetric(metric?.average, 1)}</strong></div>
+          <div><span>Median days</span><strong>${formatMetric(metric?.median)}</strong></div>
+          <div><span>90th percentile</span><strong>${formatMetric(metric?.p90)}</strong></div>
         </div>
-        <div class="rate-bar"><span style="width:${Math.round((Number(metric?.sla_adherence?.rate || 0)) * 100)}%"></span></div>
       </div>
+      <div class="trend-bars">${bars || `<p>No quarterly data available.</p>`}</div>
     </div>`;
   }
 
-  const severityBars = Object.entries(remediationBySeverity)
-    .filter(([severity]) => severity !== "not yet determined")
-    .map(([severity, metric]) => {
-      const row = metric.closure || {};
-      const pct = Math.round((Number(row.rate || 0)) * 100);
-      return `<div class="severity-bar">
-        <div class="severity-copy">
-          <span>${safe(severity)}</span>
-          <em>${safe(row.met)} / ${safe(row.eligible)}</em>
-        </div>
-        <div class="severity-track"><span style="width:${pct}%"></span></div>
-        <strong>${formatPercent(row.rate)}</strong>
-      </div>`;
-    })
-    .join("");
+  function renderRateTrendCard(title, currentNumerator, currentDenominator, currentRate, field, subtitle) {
+    return `<article class="kri-card">
+      <h3>${title}</h3>
+      <p>${currentNumerator} of ${currentDenominator} ${subtitle}</p>
+      <p class="kri-emphasis">${formatPercent(currentRate)}</p>
+      <div class="mini-chart">
+        ${(trends || [])
+          .map((quarter) => {
+            const pct = Math.round((Number(quarter?.[field] || 0)) * 100);
+            return `<div class="mini-chart-bar">
+              <span>${safe(quarter.label)}</span>
+              <div class="mini-chart-track"><span style="height:${Math.max(pct, 4)}%"></span></div>
+              <strong>${formatPercent(quarter?.[field])}</strong>
+            </div>`;
+          })
+          .join("")}
+      </div>
+    </article>`;
+  }
 
   els.kriGrid.innerHTML = `
     <article class="kri-card kri-card-wide">
-      <h3>1. Inventory Tracking and SLA Adherence</h3>
+      <h3>1. Inventory Tracking and SLA Adherence QoQ</h3>
       <p>Scope: ${safe(inventory.scope_label)} (${safe(inventory.scope_size)} issues)</p>
-      <div class="sla-grid">
-        ${renderSlaMetric("Draft logging", inventory.time_to_draft_logging_days, "Issue identified to Draft")}
-        ${renderSlaMetric("RCA completion", inventory.time_to_rca_completion_days, "Issue creation to RCA in SOR")}
-        ${renderSlaMetric("Action plan documentation", inventory.time_to_action_plan_open_days, "Issue Open to AP documentation")}
-        ${renderSlaMetric("Issue closure", inventory.time_to_issue_closure_days, "Issue Open to validated closure")}
-      </div>
-      <div class="severity-panel">
-        <h4>Closure SLA by severity</h4>
-        ${severityBars || `<p>No closure SLA data available.</p>`}
+      <div class="trend-grid">
+        ${renderTrendCard("Draft logging SLA", "draft_logging_rate", "Issue identified to Draft within 30 days", inventory.time_to_draft_logging_days, "draft_logging_met", "draft_logging_eligible")}
+        ${renderTrendCard("RCA completion SLA", "rca_completion_rate", "Issue creation to RCA in SOR within 45 days", inventory.time_to_rca_completion_days, "rca_completion_met", "rca_completion_eligible")}
+        ${renderTrendCard("Action plan documentation SLA", "action_plan_documentation_rate", "Issue Open to AP documentation within 10 days", inventory.time_to_action_plan_open_days, "action_plan_documentation_met", "action_plan_documentation_eligible")}
+        ${renderTrendCard("Issue closure SLA", "closure_rate", "Issue Open to validated closure by severity", inventory.time_to_issue_closure_days, "closure_met", "closure_eligible")}
       </div>
     </article>
-    <article class="kri-card">
-      <h3>2. Compliance Issues Overdue</h3>
-      <p>${safe(overdue.open_compliance_issues_overdue)} of ${safe(overdue.open_compliance_issues)} open issues in the CIMO population are overdue based on issue due date.</p>
-      <p class="kri-emphasis">${formatPercent(overdue.percent_overdue)}</p>
-    </article>
-    <article class="kri-card">
-      <h3>3. Self-ID Compared to Overall</h3>
-      <p>${safe(selfId.self_identified_issues)} of ${safe(selfId.overall_issues)} active issues in the ${state.filters.complianceOwnedOnly ? "Compliance-owned" : "CIMO"} population were self-identified.</p>
-      <p class="kri-emphasis">${formatPercent(selfId.percent_self_identified)}</p>
-    </article>
+    ${renderRateTrendCard(
+      "2. Compliance Issues Overdue QoQ",
+      safe(overdue.open_compliance_issues_overdue),
+      safe(overdue.open_compliance_issues),
+      overdue.percent_overdue,
+      "overdue_rate",
+      `open issues in the ${state.filters.complianceOwnedOnly ? "Compliance-owned" : "CIMO"} population are overdue based on issue due date`,
+    )}
+    ${renderRateTrendCard(
+      "3. Self-ID Compared to Overall QoQ",
+      safe(selfId.self_identified_issues),
+      safe(selfId.overall_issues),
+      selfId.percent_self_identified,
+      "self_identified_rate",
+      `active issues in the ${state.filters.complianceOwnedOnly ? "Compliance-owned" : "CIMO"} population were self-identified`,
+    )}
   `;
 }
 
