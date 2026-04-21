@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Program Health Dashboard</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="hero-copy">
+        <p class="eyebrow">Monthly Reporting</p>
+        <h1 id="pageTitle">Program Health Dashboard</h1>
+        <p class="sub" id="pageSubtitle">Scored issue population, health indicators, and monthly narrative updates.</p>
+      </div>
+      <div class="meta" id="meta"></div>
+    </header>
+
+    <main>
+      <section class="hero-grid">
+        <section class="panel story-panel">
+          <h2>Health Story</h2>
+          <div id="storySummary" class="story-summary"></div>
+        </section>
+        <section class="panel updates-panel">
+          <h2>Program Updates</h2>
+          <div id="updatesList" class="updates-list"></div>
+        </section>
+      </section>
+
+      <section class="panel filters">
+        <h2>Filters</h2>
+        <div class="filters-grid">
+          <label class="checkbox-row">
+            <input id="scopeOnly" type="checkbox" checked />
+            Show scoped population only
+          </label>
+          <label>
+            Search
+            <input id="search" type="text" placeholder="Issue ID, title, owner" />
+          </label>
+          <label>
+            Status
+            <select id="status"></select>
+          </label>
+          <label>
+            Severity
+            <select id="severity"></select>
+          </label>
+          <label>
+            Business unit
+            <select id="businessUnit"></select>
+          </label>
+          <label>
+            Risk domain
+            <select id="riskDomain"></select>
+          </label>
+          <label>
+            Issue source
+            <select id="issueSource"></select>
+          </label>
+        </div>
+        <div class="controls">
+          <button id="reset">Reset filters</button>
+          <button id="copyLink">Copy sharable link</button>
+          <button id="downloadCsv">Export current view (CSV)</button>
+          <button id="downloadSlide">Export slide (PNG)</button>
+          <button id="copySlideNotes">Copy slide notes</button>
+          <div class="upload-group">
+            <label class="upload-label">
+              Weekly raw_issues.csv
+              <input id="issuesFile" type="file" accept=".csv" />
+            </label>
+            <label class="upload-label">
+              Weekly hierarchy.csv
+              <input id="hierarchyFile" type="file" accept=".csv" />
+            </label>
+            <button id="loadCsvs">Load weekly CSVs</button>
+          </div>
+          <label class="upload-label">
+            Load local dataset
+            <input id="localFile" type="file" accept=".json" />
+          </label>
+        </div>
+      </section>
+
+      <section class="kpis" id="kpis"></section>
+
+      <section class="panel">
+        <h2>Key Risk Indicators</h2>
+        <div id="kriGrid" class="kri-grid"></div>
+      </section>
+
+      <section class="split-grid">
+        <section class="panel">
+          <h2>Status Breakdown</h2>
+          <div class="table-wrap">
+            <table id="statusTable">
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Issues</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Source Breakdown</h2>
+          <div class="table-wrap">
+            <table id="sourceTable">
+              <thead>
+                <tr>
+                  <th>Source</th>
+                  <th>Issues</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="panel">
+        <h2>Issue Detail</h2>
+        <div class="table-wrap">
+          <table id="rawTable">
+            <thead>
+              <tr>
+                <th>Issue ID</th>
+                <th>Title</th>
+                <th>Status</th>
+                <th>Severity</th>
+                <th>Business Unit</th>
+                <th>Risk Domain</th>
+                <th>Owner</th>
+                <th>Due Date</th>
+                <th>APs Open</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

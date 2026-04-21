@@ -1,0 +1,39 @@
+{
+  "program_name": "Program health dashboard",
+  "scope_note": "Edit this file to define the program population and add monthly narrative updates. If no include rules are set, the dashboard treats all records as in scope unless they match an exclude rule.",
+  "population_rules": {
+    "include_any": [],
+    "exclude_any": []
+  },
+  "kri_config": {
+    "self_identified_keywords": [
+      "Self-Identified"
+    ],
+    "sla_days_by_severity": {
+      "high": {
+        "draft_creation": 7,
+        "issue_open": 7,
+        "remediation": 90
+      },
+      "moderate": {
+        "draft_creation": 14,
+        "issue_open": 14,
+        "remediation": 180
+      },
+      "low": {
+        "draft_creation": 30,
+        "issue_open": 30,
+        "remediation": 365
+      }
+    }
+  },
+  "cimo_intake_config": {
+    "compliance_hierarchy_roots": [
+      "Tyler Hand"
+    ],
+    "compliance_level_1_risk_domain_keywords": [
+      "Compliance |"
+    ]
+  },
+  "updates": []
+}
