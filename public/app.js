@@ -287,6 +287,10 @@ function summarizeRows(rows) {
   };
 }
 
+function summarizeCimoRows(rows) {
+  return summarizeRows(rows.filter((r) => r.in_cimo_intake));
+}
+
 function makeStory(summary, totalAvailable, scopeOnly) {
   if (!summary.total) {
     return [
@@ -339,18 +343,22 @@ function renderUpdates() {
 
 function renderKpis() {
   const summary = summarizeRows(state.filteredRows);
+  const cimoSummary = summarizeCimoRows(state.filteredRows);
   const cards = [
-    ["Active issues", summary.active],
-    ["Overdue", summary.overdue],
-    ["Due in 30 days", summary.dueSoon],
-    ["High", summary.highSeverity],
-    ["Moderate", summary.moderateSeverity],
-    ["Low", summary.lowSeverity],
-    ["Risk accepted", summary.riskAccepted],
+    ["Active issues", `${summary.active} / ${cimoSummary.active}`],
+    ["Overdue", `${summary.overdue} / ${cimoSummary.overdue}`],
+    ["Due in 30 days", `${summary.dueSoon} / ${cimoSummary.dueSoon}`],
+    ["High", `${summary.highSeverity} / ${cimoSummary.highSeverity}`],
+    ["Moderate", `${summary.moderateSeverity} / ${cimoSummary.moderateSeverity}`],
+    ["Low", `${summary.lowSeverity} / ${cimoSummary.lowSeverity}`],
+    ["Risk accepted", `${summary.riskAccepted} / ${cimoSummary.riskAccepted}`],
   ];
 
   els.kpis.innerHTML = cards
-    .map(([label, value]) => `<div class="kpi"><div class="value">${value}</div><div class="label">${label}</div></div>`)
+    .map(
+      ([label, value]) =>
+        `<div class="kpi"><div class="value">${value}</div><div class="label">${label}</div><div class="kpi-note">All / CIMO</div></div>`,
+    )
     .join("");
 }
 

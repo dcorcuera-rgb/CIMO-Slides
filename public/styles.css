@@ -282,6 +282,15 @@ button:hover {
   max-width: 10ch;
 }
 
+.kpi-note {
+  margin-top: 0.5rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-family: "SFMono-Regular", Menlo, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .kri-grid {
   display: grid;
   gap: 0;
